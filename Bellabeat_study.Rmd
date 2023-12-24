@@ -1,0 +1,345 @@
+---
+title: "Bellabeat_study"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-12-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Case Study on Fitbit Dataset 
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+The Google Data Analytics Certificate offers two options to choose the guided capstone project from.
+This is a demonstration of the second option - Bellabeat Smart Device Case Study.
+
+We will install the required libraries first. Primarily, 'readr' is used for 'read_csv', 'tidyverse', for visualization, 'skimr' for operators like pipe, etc. and others' use will be demonstrated soon.
+
+```{r,warning=FALSE}
+library(readr)
+library(tidyverse)
+library(ggpubr)
+library(here)
+library(skimr)
+library(janitor)
+library(lubridate)
+library(ggrepel)
+options(readr.show_col_types = FALSE) #this is to mute column specifications using 'readr'
+hourlySteps_merged <- read_csv('hourlySteps_merged.csv')
+summary(hourlySteps_merged) #statistical review of the dataset.
+
+```
+
+```{r}
+dailyActivity_merged <- read_csv('dailyActivity_merged.csv')
+summary(dailyActivity_merged)
+```
+
+```{r} 
+sleepDay_merged <- read_csv('sleepDay_merged.csv')
+summary(sleepDay_merged)
+```
+
+We will be using these 3 datasets for the analysis.
+
+### Cleaning
+
+We will first look for inconsistencies:
+
+```{r}
+sum(duplicated(dailyActivity_merged))
+sum(duplicated(hourlySteps_merged))
+sum(duplicated(sleepDay_merged))
+```
+We can see that there are 3 duplicated entries in the 'sleepday' dataset.
+We will remove these and retain the unique rows.
+
+```{r}
+sleepDay_merged <- sleepDay_merged %>% distinct() %>% drop_na()
+sum(duplicated(sleepDay_merged))
+```
+
+```{r}
+clean_names(dailyActivity_merged)
+
+```
+
+We can see that the names are now consistent with underscores and naming standard. We will repeat the same for the other datasets and change the column names to lowercase.
+
+
+```{r}
+dailyActivity_merged <- rename_with(dailyActivity_merged,tolower)
+clean_names(sleepDay_merged)
+sleepDay_merged <- rename_with(sleepDay_merged,tolower)
+clean_names(hourlySteps_merged)
+hourlySteps_merged <- rename_with(hourlySteps_merged,tolower)
+show(dailyActivity_merged)
+```
+As we will be merging 'daily_activity' and ' sleep' datasets, we will change datetime format in 'sleep' dataset to date format.
+
+```{r,warning=FALSE}
+dailyActivity_merged <- dailyActivity_merged %>% rename(date=activitydate) %>% mutate(date = as_date(date, format = '%m/%d/%Y'))
+sleepDay_merged <- sleepDay_merged %>% rename(date=sleepday) %>% mutate(date = as_date(date,format = '%m/%d/%Y %I:%M:%S %p',tz = Sys.timezone()))
+```
+
+Let's check the format:
+
+```{r}
+head(dailyActivity_merged)
+head(sleepDay_merged)
+```
+We will need the date format of 'activity_hour' column of the 'hourly_steps' dataset to be in datetime format for visualization. For that, we will use the 'as.POSIXct' function, while we used 'as_date' function for the other two datasets.
+
+
+```{r}
+hourlySteps_merged <- hourlySteps_merged %>% rename(date_time = activityhour) %>% mutate(date_time = as.POSIXct(date_time,format= '%m/%d/%Y %I:%M:%S %p',tz = Sys.timezone()))
+```
+
+Let's check the dataset:
+
+```{r}
+head(hourlySteps_merged)
+```
+
+Let's merge 'dailyactivity' and 'sleepday' as 'id' and 'date' as primary keys.
+
+```{r}
+daily_activity_sleep <- merge(dailyActivity_merged,sleepDay_merged,by=c('id','date'))
+head(daily_activity_sleep)
+```
+
+### Analyzing Phase
+
+Let's start analyzing and trying to draw conclusions now.
+
+
+We will first try to analyze the 'step' activity level for different type of users, based on how active they are at walking.
+
+```{r}
+daily_user_avg <- daily_activity_sleep %>% group_by(id) %>% summarize(mean_daily_steps=mean(totalsteps))
+```
+
+Let's view the tibble.
+
+```{r}
+head(daily_user_avg)
+```
+
+Let's add a new column classifying these users based on how active they are:
+
+```{r}
+user_type <- daily_user_avg %>% mutate(user_type = case_when(
+  mean_daily_steps < 5000 ~ 'sedentary',
+  mean_daily_steps >= 5000 & mean_daily_steps < 7500 ~ 'lightly active',
+  mean_daily_steps >= 7500 & mean_daily_steps < 10000 ~ 'moderately active',
+  mean_daily_steps >= 10000 ~ 'highly active'
+))
+```
+
+Let's view the tibble:
+
+```{r}
+head(user_type)
+```
+
+Now, we will make a tibble to demonstrate the percentage out of the total for each step user type.
+
+```{r}
+user_type_percent <- user_type %>%
+  group_by(user_type) %>%
+  summarise(total = n()) %>%
+  mutate(totals = sum(total)) %>%
+  group_by(user_type) %>%
+  summarise(total_percent = total / totals) %>%
+  mutate(labels = scales::percent(total_percent))
+head(user_type_percent)
+```
+
+Let's sew this into a pie chart:
+
+```{r}
+user_type_percent %>%
+  ggplot(aes(x="",y=total_percent, fill=user_type)) +
+  geom_bar(stat = "identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_minimal()+
+  theme(axis.title.x= element_blank(),
+        axis.title.y = element_blank(),
+        panel.border = element_blank(), 
+        panel.grid = element_blank(), 
+        axis.ticks = element_blank(),
+        axis.text.x = element_blank(),
+        plot.title = element_text(hjust = 0.5, size=14, face = "bold")) +
+  scale_fill_manual(values = c("#ffd490","#e6e600", "#85e085", "#ff8080")) +
+  geom_text(aes(label = labels),
+            position = position_stack(vjust = 0.5))+
+  labs(title="User type distribution")
+```
+
+#### We find that 38% of the users are moderately active walkers, all other types at 21%.
+
+
+Now, we will group our findings based on each day of the week, i.e., depending on the day, how active the users are and how much sleep users have got in.
+
+```{r}
+weekdays_steps_sleep <- daily_activity_sleep %>% mutate(weekday = weekdays(date))
+weekdays_steps_sleep$weekday <- ordered(weekdays_steps_sleep$weekday,levels = c('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'))
+
+weekdays_steps_sleep <- weekdays_steps_sleep %>% group_by(weekday) %>% summarize(steps = mean(totalsteps), sleep = mean(totalminutesasleep))
+```
+
+Let's look at a tibble of the result:
+
+```{r}
+head(weekdays_steps_sleep)
+```
+
+```{r}
+ggarrange(
+    ggplot(weekdays_steps_sleep) +
+      geom_col(aes(weekday, steps), fill = "#006699") +
+      geom_hline(yintercept = 7500) +
+      labs(title = "Daily steps per weekday", x= "", y = "") +
+      theme(axis.text.x = element_text(angle = 45,vjust = 0.5, hjust = 1)),
+    ggplot(weekdays_steps_sleep, aes(weekday, sleep)) +
+      geom_col(fill = "#85e0e0") +
+      geom_hline(yintercept = 480) +
+      labs(title = "Minutes asleep per weekday", x= "", y = "") +
+      theme(axis.text.x = element_text(angle = 45,vjust = 0.5, hjust = 1))
+  )
+```
+
+#### We can see that as users do walk more than 7500 steps daily, they fail to maintain a healthy sleeping time of 8 hours.
+
+We will now try to measure steps taken at each hour of the day by the users. 
+
+```{r}
+hourlySteps_merged <- hourlySteps_merged %>%
+  separate(date_time, into = c("date", "time"), sep= " ") %>%
+  mutate(date = ymd(date)) 
+
+```
+
+
+Our observations with '00:00:00' have been converted to Null.
+We will change that.
+
+
+```{r}
+head(hourlySteps_merged)
+```
+
+```{r}
+hourlySteps_merged[is.na(hourlySteps_merged)] <- as.character('00:00:00')
+```
+
+```{r}
+head(hourlySteps_merged)
+```
+```{r}
+hourlySteps_merged%>%
+  group_by(time) %>%
+  summarize(average_steps = mean(steptotal)) %>%
+  ggplot() +
+  geom_col(mapping = aes(x=time, y = average_steps, fill = average_steps)) + 
+  labs(title = "Hourly steps throughout the day", x="", y="") + 
+  scale_fill_gradient(low = "green", high = "red")+
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+#### Users are usually active betweem 8am to 7pm, being most active between 12pm and 2pm, and 5pm and 7pm.
+
+
+
+Now, we will check for correlations.
+
+I would assume there to be a correlation between steps and calories burnt, and also between steps and minutes slept(assuming more steps would make a person sleep more because of tiredness.)
+
+```{r}
+ggarrange(
+ggplot(daily_activity_sleep, aes(x=totalsteps, y=totalminutesasleep))+
+  geom_jitter() +
+  geom_smooth(color = "red") + 
+  labs(title = "Daily steps vs Minutes asleep", x = "Daily steps", y= "Minutes asleep") +
+   theme(panel.background = element_blank(),
+        plot.title = element_text( size=14)), 
+ggplot(daily_activity_sleep, aes(x=totalsteps, y=calories))+
+  geom_jitter() +
+  geom_smooth(color = "red") + 
+  labs(title = "Daily steps vs Calories", x = "Daily steps", y= "Calories") +
+   theme(panel.background = element_blank(),
+        plot.title = element_text( size=14))
+)
+```
+#### As we can see, the second assumption made regarding sleep and steps was proven to be untrue.
+#### However, with respect to basic biology, we can verify that the more steps walked, the more are the calories burnt.
+
+
+Lastly, we will analyze the time spent by users actually using the smart device.
+
+
+```{r}
+daily_use1 <- daily_activity_sleep %>%
+  group_by(id) %>%
+  summarize(days_used=n()) %>%
+  mutate(usage = case_when(
+    days_used >= 1 & days_used <= 10 ~ "low use",
+    days_used >= 11 & days_used <= 20 ~ "moderate use", 
+    days_used >= 21 & days_used <= 31 ~ "high use", 
+  ))
+  
+head(daily_use1)
+```
+
+
+```{r}
+daily_use_percent1 <- daily_use1 %>%
+  group_by(usage) %>%
+  summarise(total = n()) %>%
+  mutate(totals = sum(total)) %>%
+  group_by(usage) %>%
+  summarise(total_percent = total / totals) %>%
+  mutate(labels = scales::percent(total_percent))
+
+daily_use_percent1$usage <- factor(daily_use_percent1$usage, levels = c("high use", "moderate use", "low use"))
+
+head(daily_use_percent1)
+```
+
+```{r}
+daily_use_percent1 %>%
+  ggplot(aes(x="",y=total_percent, fill=usage)) +
+  geom_bar(stat = "identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_minimal()+
+  theme(axis.title.x= element_blank(),
+        axis.title.y = element_blank(),
+        panel.border = element_blank(), 
+        panel.grid = element_blank(), 
+        axis.ticks = element_blank(),
+        axis.text.x = element_blank(),
+        plot.title = element_text(hjust = 0.5, size=14, face = "bold")) +
+  geom_text(aes(label = labels),
+            position = position_stack(vjust = 0.5))+
+  scale_fill_manual(values = c("#006633","#00e673","#80ffbf"),
+                    labels = c("High use - 21 to 31 days",
+                                 "Moderate use - 11 to 20 days",
+                                 "Low use - 1 to 10 days"))+
+  labs(title="Daily use of smart device")
+```
+
+
+#### We can see that 50% of the users use the smart device actively, which seems to be a very reinforcement.
+
+
+
+### Based on the conclusions drawn by these visualizations, we find that:
+###  1)Users of our dataset are moderately active walkers, measuring at nearly 40% of the user sample.
+###  2)As our users in the sample appear to be daily walkers, they fail to maintain healthy sleeping habits.
+###  3)Most of the physical activity is done in the mid-daytime, specifically between 12 and 2 in the afternoon and 5 and 7 in the evening.
+###  4)An assumption of ours, where more steps could correlate to more sleep, was proven wrong and the notion of more steps and calories burnt was reinstated.
+###  5)We found out that most of the users iin our sample actively use the smart device(about 50% of the sample).
